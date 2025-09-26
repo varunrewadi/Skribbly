@@ -1,4 +1,4 @@
-export type Tool = 'selection' | 'rectangle' | 'circle' | 'line' | 'freehand' | 'text';
+export type Tool = 'selection' | 'pan' | 'rectangle' | 'circle' | 'line' | 'freehand' | 'text';
 
 export interface Point {
   x: number;
@@ -20,6 +20,12 @@ export interface Element {
   angle?: number; // For rotation
 }
 
+export interface ViewportState {
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+}
+
 export interface CanvasState {
   elements: Element[];
   selectedElementId: string | null;
@@ -33,4 +39,9 @@ export interface DrawingState {
   isDrawing: boolean;
   currentElement: Element | null;
   startPoint: Point | null;
+}
+
+export interface PanState {
+  isPanning: boolean;
+  lastPanPoint: Point | null;
 }

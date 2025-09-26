@@ -1,5 +1,12 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
-import type { Tool, CanvasState, DrawingState, Point } from "../types/canvas";
+import type {
+  Tool,
+  CanvasState,
+  DrawingState,
+  Point,
+  ViewportState,
+  PanState,
+} from "../types/canvas";
 import { createElement, drawElement, getElementAtPosition } from "../utils";
 import Toolbar from "./Toolbar";
 
@@ -20,6 +27,17 @@ const Canvas = () => {
     startPoint: null,
   });
 
+  const [viewportState, setViewportState] = useState<ViewportState>({
+    offsetX: 0,
+    offsetY: 0,
+    scale: 1,
+  });
+
+  const [panState, setPanState] = useState<PanState>({
+    isPanning: false,
+    lastPanPoint: null,
+  });
+
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -27,6 +45,11 @@ const Canvas = () => {
 
     // Clear canvas with transparent background so dotted pattern shows through
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Apply viewport transformations
+    ctx.save();
+    ctx.translate(viewportState.offsetX, viewportState.offsetY);
+    ctx.scale(viewportState.scale, viewportState.scale);
 
     // Draw all elements
     canvasState.elements.forEach((element) => {
@@ -37,10 +60,15 @@ const Canvas = () => {
     if (drawingState.currentElement) {
       drawElement(ctx, drawingState.currentElement);
     }
+
+    ctx.restore();
   }, [
     canvasState.elements,
     canvasState.selectedElementId,
     drawingState.currentElement,
+    viewportState.offsetX,
+    viewportState.offsetY,
+    viewportState.scale,
   ]);
 
   useEffect(() => {
@@ -67,6 +95,21 @@ const Canvas = () => {
     if (!canvas) return { x: 0, y: 0 };
 
     const rect = canvas.getBoundingClientRect();
+    const canvasX = e.clientX - rect.left;
+    const canvasY = e.clientY - rect.top;
+
+    // Convert canvas coordinates to world coordinates (accounting for pan and zoom)
+    return {
+      x: (canvasX - viewportState.offsetX) / viewportState.scale,
+      y: (canvasY - viewportState.offsetY) / viewportState.scale,
+    };
+  };
+
+  const getCanvasPos = (e: React.MouseEvent<HTMLCanvasElement>): Point => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+
+    const rect = canvas.getBoundingClientRect();
     return {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
@@ -75,6 +118,20 @@ const Canvas = () => {
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const point = getMousePos(e);
+    const canvasPoint = getCanvasPos(e);
+
+    // Handle panning with pan tool, middle mouse button, or modifier keys + left click
+    if (
+      canvasState.currentTool === "pan" ||
+      e.button === 1 ||
+      (e.button === 0 && (e.metaKey || e.ctrlKey || e.shiftKey))
+    ) {
+      setPanState({
+        isPanning: true,
+        lastPanPoint: canvasPoint,
+      });
+      return;
+    }
 
     if (canvasState.currentTool === "selection") {
       const element = getElementAtPosition(
@@ -121,6 +178,26 @@ const Canvas = () => {
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvasPoint = getCanvasPos(e);
+
+    // Handle panning
+    if (panState.isPanning && panState.lastPanPoint) {
+      const deltaX = canvasPoint.x - panState.lastPanPoint.x;
+      const deltaY = canvasPoint.y - panState.lastPanPoint.y;
+
+      setViewportState((prev) => ({
+        ...prev,
+        offsetX: prev.offsetX + deltaX,
+        offsetY: prev.offsetY + deltaY,
+      }));
+
+      setPanState((prev) => ({
+        ...prev,
+        lastPanPoint: canvasPoint,
+      }));
+      return;
+    }
+
     if (!drawingState.isDrawing || !drawingState.startPoint) return;
 
     const point = getMousePos(e);
@@ -157,6 +234,15 @@ const Canvas = () => {
   };
 
   const handleMouseUp = () => {
+    // Reset panning state
+    if (panState.isPanning) {
+      setPanState({
+        isPanning: false,
+        lastPanPoint: null,
+      });
+      return;
+    }
+
     if (!drawingState.isDrawing || !drawingState.currentElement) return;
 
     // Add the completed element to the canvas
@@ -190,6 +276,41 @@ const Canvas = () => {
       selectedElementId: null,
     }));
   };
+
+  const handleWheel = useCallback(
+    (e: React.WheelEvent<HTMLCanvasElement>) => {
+      e.preventDefault();
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
+      const newScale = Math.max(
+        0.1,
+        Math.min(5, viewportState.scale * scaleFactor)
+      );
+
+      // Calculate new offset to zoom towards mouse position
+      const mouseWorldX =
+        (mouseX - viewportState.offsetX) / viewportState.scale;
+      const mouseWorldY =
+        (mouseY - viewportState.offsetY) / viewportState.scale;
+
+      const newOffsetX = mouseX - mouseWorldX * newScale;
+      const newOffsetY = mouseY - mouseWorldY * newScale;
+
+      setViewportState({
+        offsetX: newOffsetX,
+        offsetY: newOffsetY,
+        scale: newScale,
+      });
+    },
+    [viewportState]
+  );
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -230,15 +351,36 @@ const Canvas = () => {
       />
 
       {/* Canvas Area with Dotted Background */}
-      <div className="relative h-full w-full bg-[#f8fafc]">
-        <div className="absolute bottom-0 left-0 right-0 top-0 bg-[radial-gradient(#0000001a_1px,#f8fafc_1px)] bg-[size:16px_16px]"></div>
+      <div className="relative h-full w-full bg-[#f8fafc] overflow-hidden">
+        <div
+          className="absolute bg-[radial-gradient(#0000001a_1px,#f8fafc_1px)] bg-[size:16px_16px]"
+          style={{
+            left: `${viewportState.offsetX % (16 * viewportState.scale)}px`,
+            top: `${viewportState.offsetY % (16 * viewportState.scale)}px`,
+            width: `${100 + Math.ceil(16 * viewportState.scale)}%`,
+            height: `${100 + Math.ceil(16 * viewportState.scale)}%`,
+            backgroundSize: `${16 * viewportState.scale}px ${
+              16 * viewportState.scale
+            }px`,
+          }}
+        ></div>
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full cursor-crosshair"
+          className={`absolute inset-0 w-full h-full ${
+            panState.isPanning
+              ? "cursor-grabbing"
+              : canvasState.currentTool === "pan"
+              ? "cursor-grab"
+              : canvasState.currentTool === "selection"
+              ? "cursor-default"
+              : "cursor-crosshair"
+          }`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onWheel={handleWheel}
+          onContextMenu={(e) => e.preventDefault()}
         />
       </div>
 

@@ -27,6 +27,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         {(
           [
             "selection",
+            "pan",
             "rectangle",
             "circle",
             "line",
@@ -46,6 +47,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           >
             {/* Tool Icons */}
             {tool === "selection" && "↖"}
+            {tool === "pan" && "✋"}
             {tool === "rectangle" && "□"}
             {tool === "circle" && "○"}
             {tool === "line" && "/"}
